@@ -1,0 +1,84 @@
+name: CI/CD Pipeline
+ 
+on:
+  push:
+    branches: [main]
+ 
+env:
+  DOTNET_VERSION: '8.0.x'
+
+  IMAGE_NAME: ${{ secrets.DOCKERHUB_USERNAME }}/my-app
+ 
+jobs:
+ 
+  
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+ 
+      - name: Setup .NET SDK
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+ 
+      - name: Restore dependencies
+        run: dotnet restore
+ 
+      - name: Build
+        run: dotnet build --configuration Release --no-restore
+ 
+      - name: Run unit tests
+        run: dotnet test --configuration Release --no-build --verbosity normal
+ 
+
+  build-and-push:
+    name: Build & Push Docker Image
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+ 
+      - name: Set image tag (short commit SHA)
+        id: vars
+        run: echo "image_tag=$(echo ${GITHUB_SHA} | cut -c1-7)" >> "$GITHUB_OUTPUT"
+ 
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+ 
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+ 
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ${{ env.IMAGE_NAME }}:${{ steps.vars.outputs.image_tag }}
+            ${{ env.IMAGE_NAME }}:latest
+ 
+
+  deploy:
+    name: Deploy to VPS
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USERNAME }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT }}
+          script: |
+            cd /path/to/your/app   # change to the directory holding docker-compose.yml on the VPS
+            docker-compose pull
+            docker-compose up -d
+ 
